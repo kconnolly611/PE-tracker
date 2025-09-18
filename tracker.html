@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PE Class Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    h1, h2 { font-size: 24px; }
+    select, input, textarea, button { font-size: 16px; margin: 5px 0 10px; padding: 5px; }
+    .key { font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background-color: #f0f0f0; }
+    textarea { width: 100%; height: 50px; }
+    .row-b { background-color: #ffcccc; } /* red */
+    .row-i { background-color: #cce5ff; } /* blue */
+    .row-r { background-color: #ffd9b3; } /* orange */
+    .row-t { background-color: #d6f5d6; } /* green */
+    .controls { margin-top: 20px; }
+    .delete-btn { cursor: pointer; color: red; border: none; background: none; font-size: 18px; }
+  </style>
+</head>
+<body>
+  <h1>PE Class Tracker</h1>
+
+  <!-- Period Selector -->
+  <label for="periodSelect">Select Period:</label>
+  <select id="periodSelect"></select>
+
+  <!-- Notes Input -->
+  <div>
+    <label for="noteInput">Optional Note:</label><br>
+    <textarea id="noteInput" placeholder="Type note to attach with next log..."></textarea>
+  </div>
+
+  <!-- Event Keys -->
+  <p>Press keys to log an event:</p>
+  <ul>
+    <li><span class="key">B</span> = Behavior</li>
+    <li><span class="key">T</span> = Transition</li>
+    <li><span class="key">I</span> = Instruction</li>
+    <li><span class="key">R</span> = Refocus/Redirection</li>
+    <li><span class="key">M</span> = Medical</li>
+  </ul>
+
+  <!-- Day Selector -->
+  <label for="daySelect">View Logs for:</label>
+  <select id="daySelect"></select>
+
+  <!-- Summary Table -->
+  <h2>Summary Totals by Period (minutes)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Period</th>
+        <th>Behavior (B)</th>
+        <th>Transition (T)</th>
+        <th>Instruction (I)</th>
+        <th>Refocus (R)</th>
+        <th>Medical (M)</th>
+        <th>Aides</th>
+      </tr>
+    </thead>
+    <tbody id="summaryBody"></tbody>
+  </table>
+
+  <!-- Event Log -->
+  <h2>Event Log</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Date & Time</th>
+        <th>Event</th>
+        <th>Minutes</th>
+        <th>Period</th>
+        <th>Note</th>
+        <th>Delete</th>
+      </tr>
+    </thead>
+    <tbody id="logBody"></tbody>
+  </table>
+
+  <!-- Manual Add Form -->
+  <h2>Manually Add Event</h2>
+  <div>
+    <label>Event:</label>
+    <select id="manualEvent">
+      <option value="b">Behavior</option>
+      <option value="t">Transition</option>
+      <option value="i">Instruction</option>
+      <option value="r">Refocus</option>
+      <option value="m">Medical</option>
+    </select>
+    <label>Minutes:</label>
+    <input type="number" id="manualMinutes" min="1" value="1">
+    <button id="manualAddBtn">Add</button>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button id="downloadBtn">Download CSV</button>
+    <button id="printBtn">Print</button>
+  </div>
+
+  <!-- Instruction Timer -->
+  <h2>Instruction Timer</h2>
+  <p id="instructionTimer">No active instruction</p>
+
+  <script>
+    const periods = Array.from({ length: 9 }, (_, i) => `Period ${i + 1}`);
+    const eventKeys = ['b', 't', 'i', 'r', 'm'];
+    const eventLabels = {
+      b: "Behavior",
+      t: "Transition",
+      i: "Instruction",
+      r: "Refocus/Redirection",
+      m: "Medical"
+    };
+
+    const periodSelect = document.getElementById('periodSelect');
+    const logBody = document.getElementById('logBody');
+    const summaryBody = document.getElementById('summaryBody');
+    const daySelect = document.getElementById('daySelect');
+    const noteInput = document.getElementById('noteInput');
+    const manualEvent = document.getElementById('manualEvent');
+    const manualMinutes = document.getElementById('manualMinutes');
+    const manualAddBtn = document.getElementById('manualAddBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const printBtn = document.getElementById('printBtn');
+    const timerDisplay = document.getElementById('instructionTimer');
+
+    // Fill period dropdown
+    periods.forEach(period => {
+      const option = document.createElement('option');
+      option.value = period;
+      option.textContent = period;
+      periodSelect.appendChild(option);
+    });
+
+    // Data
+    let allData = JSON.parse(localStorage.getItem("peTrackerData") || "{}");
+    let instructionState = JSON.parse(localStorage.getItem("instructionState") || "null");
+    let timerInterval = null;
+
+    function saveData() {
+      localStorage.setItem("peTrackerData", JSON.stringify(allData));
+    }
+
+    function saveInstructionState(state) {
+      localStorage.setItem("instructionState", JSON.stringify(state));
+    }
+
+    function getTodayKey() {
+      return new Date().toISOString().split("T")[0];
+    }
+
+    function getDateTime() {
+      return new Date().toLocaleString();
+    }
+
+    function ensureDateData(dateKey) {
+      if (!allData[dateKey]) {
+        allData[dateKey] = { summary: {}, logs: [], aides: {} };
+        periods.forEach(p => {
+          allData[dateKey].summary[p] = { b: 0, t: 0, i: 0, r: 0, m: 0 };
+          allData[dateKey].aides[p] = 0;
+        });
+        updateDaySelect();
+        saveData();
+      }
+    }
+
+    function updateDaySelect() {
+      const keys = Object.keys(allData).sort().reverse();
+      daySelect.innerHTML = keys.map(d => `<option value="${d}">${d}</option>`).join('');
+      if (!daySelect.value) daySelect.value = getTodayKey();
+    }
+
+    function updateSummaryTable(dateKey) {
+      const summary = allData[dateKey].summary;
+      const aides = allData[dateKey].aides || {};
+      summaryBody.innerHTML = "";
+      periods.forEach(period => {
+        const counts = summary[period];
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${period}</td>
+          <td>${counts.b}</td>
+          <td>${counts.t}</td>
+          <td>${counts.i}</td>
+          <td>${counts.r}</td>
+          <td>${counts.m}</td>
+          <td contenteditable="true" data-period="${period}">${aides[period] || 0}</td>
+        `;
+        summaryBody.appendChild(row);
+      });
+
+      // Save aides edits
+      summaryBody.querySelectorAll("td[contenteditable]").forEach(cell => {
+        cell.addEventListener("input", e => {
+          const p = e.target.dataset.period;
+          allData[dateKey].aides[p] = parseInt(e.target.textContent) || 0;
+          saveData();
+        });
+      });
+    }
+
+    function updateLogTable(dateKey) {
+      const logs = allData[dateKey].logs;
+      logBody.innerHTML = "";
+      logs.forEach((log, idx) => {
+        const row = document.createElement("tr");
+        row.classList.add(`row-${log.type}`);
+        row.innerHTML = `
+          <td>${log.time}</td>
+          <td>${eventLabels[log.type]}</td>
+          <td>${log.minutes || ""}</td>
+          <td>${log.period}</td>
+          <td>${log.note || ""}</td>
+        `;
+        const delCell = document.createElement("td");
+        const delBtn = document.createElement("button");
+        delBtn.textContent = "❌";
+        delBtn.className = "delete-btn";
+        delBtn.addEventListener("click", () => {
+          if (confirm(`Delete this log?\n${log.time} - ${eventLabels[log.type]} (${log.period})`)) {
+            const mins = log.minutes ? parseInt(log.minutes) : 1;
+            allData[dateKey].summary[log.period][log.type] -= mins;
+            if (allData[dateKey].summary[log.period][log.type] < 0) {
+              allData[dateKey].summary[log.period][log.type] = 0;
+            }
+            allData[dateKey].logs.splice(idx, 1);
+            saveData();
+            updateSummaryTable(dateKey);
+            updateLogTable(dateKey);
+          }
+        });
+        delCell.appendChild(delBtn);
+        row.appendChild(delCell);
+        logBody.appendChild(row);
+      });
+    }
+
+    function logEvent(key, minutes = 1) {
+      const dateKey = getTodayKey();
+      const period = periodSelect.value;
+      const note = noteInput.value.trim();
+      ensureDateData(dateKey);
+
+      // if instruction, handle timer
+      if (key === "i") {
+        if (instructionState && instructionState.active) {
+          stopInstructionTimer();
+        } else {
+          startInstructionTimer(dateKey, period, note);
+          return;
+        }
+      } else {
+        if (instructionState && instructionState.active) {
+          stopInstructionTimer(key);
+        }
+      }
+
+      allData[dateKey].summary[period][key] += minutes;
+      allData[dateKey].logs.push({
+        time: getDateTime(),
+        type: key,
+        period: period,
+        note: note,
+        minutes: minutes
+      });
+      noteInput.value = "";
+      saveData();
+      if (daySelect.value === dateKey) {
+        updateSummaryTable(dateKey);
+        updateLogTable(dateKey);
+      }
+    }
+
+    function startInstructionTimer(dateKey, period, note) {
+      instructionState = {
+        active: true,
+        startTime: Date.now(),
+        dateKey,
+        period,
+        note
+      };
+      saveInstructionState(instructionState);
+      timerInterval = setInterval(updateInstructionTimer, 1000);
+      updateInstructionTimer();
+    }
+
+    function stopInstructionTimer(nextKey = null) {
+      if (!instructionState) return;
+      clearInterval(timerInterval);
+      const elapsedMins = Math.round((Date.now() - instructionState.startTime) / 60000);
+      const { dateKey, period, note } = instructionState;
+      allData[dateKey].summary[period].i += elapsedMins;
+      allData[dateKey].logs.push({
+        time: getDateTime(),
+        type: "i",
+        period,
+        note,
+        minutes: elapsedMins
+      });
+      saveData();
+      if (daySelect.value === dateKey) {
+        updateSummaryTable(dateKey);
+        updateLogTable(dateKey);
+      }
+      instructionState = null;
+      saveInstructionState(null);
+      timerDisplay.textContent = "No active instruction";
+      if (nextKey) logEvent(nextKey);
+    }
+
+    function updateInstructionTimer() {
+      if (!instructionState || !instructionState.active) return;
+      const elapsedSecs = Math.floor((Date.now() - instructionState.startTime) / 1000);
+      const mins = Math.floor(elapsedSecs / 60);
+      const secs = elapsedSecs % 60;
+      timerDisplay.textContent = `Instruction running: ${mins}m ${secs}s`;
+    }
+
+    // Manual add
+    manualAddBtn.addEventListener("click", () => {
+      const key = manualEvent.value;
+      const mins = parseInt(manualMinutes.value) || 1;
+      logEvent(key, mins);
+    });
+
+    // Hotkeys
+    document.addEventListener("keydown", e => {
+      const key = e.key.toLowerCase();
+      if (eventKeys.includes(key)) logEvent(key);
+    });
+
+    // Day change
+    daySelect.addEventListener("change", () => {
+      const selectedDay = daySelect.value;
+      updateSummaryTable(selectedDay);
+      updateLogTable(selectedDay);
+    });
+
+    // Download
+    downloadBtn.addEventListener("click", () => {
+      const dateKey = daySelect.value;
+      const logs = allData[dateKey].logs;
+      let csv = "Time,Event,Minutes,Period,Note\n";
+      logs.forEach(l => {
+        csv += `"${l.time}","${eventLabels[l.type]}","${l.minutes || ""}","${l.period}","${l.note || ""}"\n`;
+      });
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `PE_Log_${dateKey}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // Print
+    printBtn.addEventListener("click", () => window.print());
+
+    // Init
+    const todayKey = getTodayKey();
+    ensureDateData(todayKey);
+    updateDaySelect();
+    updateSummaryTable(daySelect.value);
+    updateLogTable(daySelect.value);
+
+    // Resume instruction if active
+    if (instructionState && instructionState.active) {
+      timerInterval = setInterval(updateInstructionTimer, 1000);
+      updateInstructionTimer();
+    }
+  </script>
+</body>
+</html>
